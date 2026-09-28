@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Опрос</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, sans-serif; background: #f2f4f7; color: #1c1f24; }
+.wrap { max-width: 480px; margin: 0 auto; padding: 16px; min-height: 100vh; }
+h1 { font-size: 22px; margin: 8px 0 16px; }
+.box { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+.small { color: #666; font-size: 13px; margin-bottom: 8px; }
+.opt { display: block; padding: 12px; border: 1px solid #ccd0d6; border-radius: 8px; margin-bottom: 8px; }
+.opt input { margin-right: 10px; }
+.opt.on { border-color: #1a6ef0; background: #eaf1ff; }
+textarea { width: 100%; height: 100px; padding: 10px; font-size: 16px; border: 1px solid #ccd0d6; border-radius: 8px; }
+button { width: 100%; padding: 14px; font-size: 16px; border: 0; border-radius: 8px; background: #1a6ef0; color: #fff; margin-top: 8px; }
+button.gray { background: #6b7280; }
+button:disabled { background: #b8bec8; }
+pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: #f2f4f7; padding: 10px; border-radius: 8px; max-height: 260px; overflow: auto; }
+.bar { height: 6px; background: #dde1e7; border-radius: 3px; margin-bottom: 12px; }
+.bar div { height: 6px; background: #1a6ef0; border-radius: 3px; }
+.err { color: #c0392b; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+var QUESTIONS_URL = "questions.json";
+var app = document.getElementById("app");
+var data = null;
+var index = 0;
+var answers = [];
+var startedAt = null;
+var result = null;
+
+function getDeviceId() {
+  var id = localStorage.getItem("deviceId");
+  if (!id) {
+    id = "dev-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    localStorage.setItem("deviceId", id);
+  }
+  return id;
+}
+
+function loadHistory() {
+  var raw = localStorage.getItem("results");
+  return raw ? JSON.parse(raw) : [];
+}
+
+function showStart() {
+  var count = loadHistory().length;
+  app.innerHTML =
+    "<h1>Опрос</h1>" +
+    "<div class='box'><div class='small'>Устройство: " + getDeviceId() + "</div>" +
+    "<div class='small'>Пройдено опросов на этом устройстве: " + count + "</div>" +
+    "<div id='status'></div>" +
+    "<button id='startBtn'>Начать опрос</button>" +
+    (count > 0 ? "<button class='gray' id='histBtn'>Сохранённые результаты</button>" : "") +
+    "</div>";
+  document.getElementById("startBtn").onclick = loadQuestions;
+  if (count > 0) document.getElementById("histBtn").onclick = showHistory;
+}
+
+function loadQuestions() {
+  var status = document.getElementById("status");
+  status.innerHTML = "<div class='small'>Загрузка вопросов...</div>";
+  fetch(QUESTIONS_URL + "?t=" + Date.now())
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (json) {
+      data = json;
+      index = 0;
+      answers = [];
+      startedAt = new Date();
+      showQuestion();
+    })
+    .catch(function (e) {
+      status.innerHTML = "<div class='small err'>Не удалось загрузить вопросы: " + e.message + "</div>";
+    });
+}
+
+function showQuestion() {
+  var q = data.questions[index];
+  var total = data.questions.length;
+  var saved = answers[index];
+  var html =
+    "<div class='bar'><div style='width:" + (index / total * 100) + "%'></div></div>" +
+    "<div class='box'><div class='small'>Вопрос " + (index + 1) + " из " + total + "</div>" +
+    "<h1>" + q.text + "</h1><div id='opts'>";
+
+  if (q.type === "text") {
+    html += "<textarea id='txt' placeholder='Твой ответ'>" + (saved ? saved.answer[0] || "" : "") + "</textarea>";
+  } else {
+    var inputType = q.type === "single" ? "radio" : "checkbox";
+    for (var i = 0; i < q.options.length; i++) {
+      var checked = saved && saved.answer.indexOf(q.options[i]) !== -1;
+      html += "<label class='opt" + (checked ? " on" : "") + "'><input type='" + inputType +
+        "' name='opt' value='" + q.options[i] + "'" + (checked ? " checked" : "") + ">" + q.options[i] + "</label>";
+    }
+  }
+
+  html += "</div><button id='nextBtn' disabled>" + (index === total - 1 ? "Завершить" : "Далее") + "</button>";
+  if (index > 0) html += "<button class='gray' id='backBtn'>Назад</button>";
+  html += "</div>";
+  app.innerHTML = html;
+
+  var next = document.getElementById("nextBtn");
+
+  function collect() {
+    if (q.type === "text") {
+      var v = document.getElementById("txt").value.trim();
+      return v ? [v] : [];
+    }
+    var list = [];
+    var inputs = document.querySelectorAll("input[name='opt']");
+    for (var i = 0; i < inputs.length; i++) {
+      inputs[i].parentNode.className = "opt" + (inputs[i].checked ? " on" : "");
+      if (inputs[i].checked) list.push(inputs[i].value);
+    }
+    return list;
+  }
+
+  function refresh() {
+    next.disabled = collect().length === 0;
+  }
+
+  if (q.type === "text") {
+    document.getElementById("txt").oninput = refresh;
+  } else {
+    var all = document.querySelectorAll("input[name='opt']");
+    for (var i = 0; i < all.length; i++) all[i].onchange = refresh;
+  }
+  refresh();
+
+  next.onclick = function () {
+    answers[index] = { questionId: q.id, question: q.text, type: q.type, answer: collect() };
+    if (index === total - 1) showConfirm();
+    else { index++; showQuestion(); }
+  };
+
+  if (index > 0) {
+    document.getElementById("backBtn").onclick = function () {
+      answers[index] = { questionId: q.id, question: q.text, type: q.type, answer: collect() };
+      index--;
+      showQuestion();
+    };
+  }
+}
+
+function showConfirm() {
+  app.innerHTML =
+    "<h1>Завершить опрос?</h1>" +
+    "<div class='box'><div class='small'>Отвечено вопросов: " + answers.length + " из " + data.questions.length + "</div>" +
+    "<button id='okBtn'>Подтвердить и сохранить</button>" +
+    "<button class='gray' id='cancelBtn'>Вернуться к вопросам</button></div>";
+  document.getElementById("okBtn").onclick = finish;
+  document.getElementById("cancelBtn").onclick = function () {
+    index = data.questions.length - 1;
+    showQuestion();
+  };
+}
+
+function finish() {
+  var finishedAt = new Date();
+  result = {
+    surveyTitle: data.title,
+    deviceId: getDeviceId(),
+    startedAt: startedAt.toISOString(),
+    finishedAt: finishedAt.toISOString(),
+    userAgent: navigator.userAgent,
+    answers: answers
+  };
+  var history = loadHistory();
+  history.push(result);
+  localStorage.setItem("results", JSON.stringify(history));
+  downloadJson(result);
+  showResult();
+}
+
+function fileName(r) {
+  return "result_" + r.deviceId + "_" + r.finishedAt.replace(/[:.]/g, "-") + ".json";
+}
+
+function downloadJson(obj) {
+  var blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = Array.isArray(obj) ? "all_results_" + getDeviceId() + ".json" : fileName(obj);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function showResult() {
+  app.innerHTML =
+    "<h1>Готово</h1>" +
+    "<div class='box'><div class='small'>Результат сохранён на устройстве и скачан как JSON-файл</div>" +
+    "<pre>" + JSON.stringify(result, null, 2) + "</pre>" +
+    "<button id='dlBtn'>Скачать JSON ещё раз</button>" +
+    "<button class='gray' id='homeBtn'>На главную</button></div>";
+  document.getElementById("dlBtn").onclick = function () { downloadJson(result); };
+  document.getElementById("homeBtn").onclick = showStart;
+}
+
+function showHistory() {
+  var history = loadHistory();
+  app.innerHTML =
+    "<h1>Результаты</h1>" +
+    "<div class='box'><div class='small'>Всего прохождений: " + history.length + "</div>" +
+    "<pre>" + JSON.stringify(history, null, 2) + "</pre>" +
+    "<button id='allBtn'>Скачать все результаты (JSON)</button>" +
+    "<button class='gray' id='clearBtn'>Очистить историю</button>" +
+    "<button class='gray' id='homeBtn'>На главную</button></div>";
+  document.getElementById("allBtn").onclick = function () { downloadJson(history); };
+  document.getElementById("clearBtn").onclick = function () {
+    localStorage.removeItem("results");
+    showStart();
+  };
+  document.getElementById("homeBtn").onclick = showStart;
+}
+
+showStart();
+</script>
+</body>
+</html>
